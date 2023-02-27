@@ -1,0 +1,63 @@
+#!/bin/python
+
+MODELS = ["m1a", "m1b", "m1c", "m2a", "m2b", "m2c", "m3a", "m3b", "m3c"]
+
+rule all:
+    input:
+        expand("data/svs/{model}.txt", model=MODELS),
+        expand("results/ewas/ALSPAC_AD_{model}.txt", model=MODELS)
+
+rule clean_meth:
+    input:
+        samplesheet_file='',
+        aries_meth_dat='',
+        aries_detection_p='',
+    output:
+        ""
+    params:
+        timepoint="cord"
+    script:
+        "scripts/clean-meth.R"
+
+# Note - this comes after extracting the phenotype data from ARIES
+# there would be a "clean_pheno" rule if Kim hadn't already extracted/cleaned that data
+rule gen_svs:
+    input:
+        pheno_file="data/pheno_eczema_stata_version15.dta",
+        meth_file="data/cleaned_meth_data.RData", 
+        cell_counts='',
+        useful_functions='scripts/useful_functions.R'
+    output:
+        results="data/svs/{model}.txt", 
+        removed="data/svs/removed/{model}.RData"
+    params:
+        models=MODELS
+    shell:
+        'Rscript scripts/gen-svs.R "{input.pheno_file}" "{input.meth_file}" "{input.cell_counts}" "{input.useful_functions}" "{output.results}" "{output.removed}" "{params.models}"'   
+
+# Could potentially add something here to make a report to see each of the covariates associations with the trait of interest
+
+rule run_ewas:
+    input:
+        pheno_file="data/pheno_eczema_stata_version15.dta",
+        meth_file="data/cleaned_meth_data.RData", 
+        cell_counts='',
+        useful_functions='scripts/useful_functions.R',
+        svs_file="data/svs/{model}.txt"
+    output:
+        "results/ewas/ALSPAC_AD_{model}.txt"
+    params:
+        models=MODELS
+    shell:
+        'Rscript scripts/ewas.R "{input.pheno_file}" "{input.meth_file}" "{input.cell_counts}" "{input.useful_functions}" "{input.svs_file}" "{output}" "{params.models}"'   
+
+rule ewas_report:
+    input:
+        filenames=expand("results/ewas/ALSPAC_AD_{model}.txt", model=MODELS),
+        report='report/ewas-report.Rmd'
+    output:
+        "report/ewas-report.html"
+    shell:
+        "echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_format='all', params=list(inputs = '{input.filenames}'))\""
+
+# Rscript -e "rmarkdown::render('report/ewas-report.Rmd')"

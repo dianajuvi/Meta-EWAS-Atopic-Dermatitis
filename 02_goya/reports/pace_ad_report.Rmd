@@ -1,0 +1,54 @@
+# PACE atopic dermatitis study
+
+```{r setoptions, eval = TRUE, echo = FALSE}
+opts_chunk$set(echo = FALSE, 
+            warning = FALSE, 
+            message = FALSE, 
+            fig.width = 12, 
+            fig.height = 7,
+            cache = FALSE,
+            fig.align = 'center')
+```
+
+```{r call_source}
+read_chunk("~/PACE/pace_ad/reports/pace_ad_report.r")
+```
+
+``` {r load_data, results = "hide", message = FALSE, warning = FALSE}
+```
+
+## Aim:
+To examine the association between DNA methylation and atopic dermatitis (AD) in early life
+
+
+## Methods
+* __Sample__: Danish individuals of a random subset of the GOYA cohort (N = `r nrow(goya)`). AD data was gathered at 7 years of age.
+* __Tissue__: Cord blood (450k data)
+* __Outcome definitions__:
+	+ Childhood AD = A doctor has at some point said that the child has eczema/allergic rash, and this rash has been active within the last twelve months __OR__ The child has had an itchy rash within the last twelve months, and this rash has affected one of the following places: the folds of the elbows, behind the knees, in front of the ankles, under the buttocks, or around the neck, ears or eyes __OR__ The child has had either doctor diagnosed AD or rash as described in (2), but not active within the last 12 months.
+	+ Early AD = A doctor has diagnosed the child with eczema/allergic rash that occurred before 2 years of age
+	+ Persistant AD = A doctor has diagnosed the child with eczema/allergic rash before 2 years of age, and this rash has been active within the last twelve months
+* __Models__:
+	+ A. AD ~ methylation + sex + SVs
+
+	+ B. AD ~ methylation + sex + SVs + maternal age + maternal smoking in pregnancy + maternal SES + gestational age
+
+	+ C. AD ~ methylation + sex + SVs + maternal age + maternal smoking in pregnancy + maternal SES + gestational age + cell count (bakulski)
+
+
+### Summary of data
+```{r summary_table_setup, results = "hide", message = FALSE, warning = FALSE, echo = FALSE}
+```
+```{r summary_table, results = "asis", message = FALSE, warning = FALSE, echo = FALSE, fig.cap = cov_tab_cap}
+```
+
+## Results
+```{r results_setup, results = "hide", message = FALSE, warning = FALSE, echo = FALSE}
+```
+
+```{r results_table1, results = "asis", message = FALSE, warning = FALSE, echo = FALSE, fig.cap = res_tab_cap}
+```
+
+```{r manhattan, results = "asis", message = FALSE, warning = FALSE, echo = FALSE, fig.cap = manhattans_cap}
+```
+

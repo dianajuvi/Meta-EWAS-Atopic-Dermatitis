@@ -1,0 +1,149 @@
+#!/bin/python 
+
+from snakemake.remote.SFTP import RemoteProvider
+SFTP = RemoteProvider(username="", password="")
+
+LOCAL_DIR=""
+RDSF_FILEDIR=""
+
+MODELS = ["m1a", "m1b", "m1c", "m2a", "m2b", "m2c", "m3a", "m3b", "m3c"]
+
+# all_models = {
+#     "childhood": ['m1a', 'm1b', 'm1c'],
+#     "early_onset": ['m2a', 'm2b', 'm2c'],
+#     "persistent": ['m3a', 'm3b', 'm3c'],
+# }
+
+# def flatten_list (list_of_lists):
+# 	return [item for sublist in list_of_lists for item in sublist]
+
+rule all:
+	input:
+		# expand(LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt", model = flatten_list(list(all_models.values()))), 
+		expand(LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt", model = MODELS), 
+		LOCAL_DIR+"/meta-analysis/report/meta-analysis-report.html",
+		LOCAL_DIR+"/meta-analysis/report/cohort-comparison-report.html",
+		# expand(LOCAL_DIR+"/meta-analysis/results/dmrff/{model}.txt", model = MODELS), 
+		LOCAL_DIR+"/meta-analysis/report/dmrff-report.html"
+
+def get_input_files (wildcards):
+	file_dir = RDSF_FILEDIR+"/"+wildcards.model
+	wc = SFTP.glob_wildcards(file_dir+"/{file}")
+	return SFTP.remote(expand(file_dir+"/{file}", file = wc.file))
+
+rule meta_analysis:
+	input:
+		files = get_input_files,
+		script = LOCAL_DIR+"/meta-analysis/scripts/meta-analysis.sh"
+	output:
+		res = LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt"
+	params:
+		metal_in = LOCAL_DIR+"/meta-analysis/data/metal-infiles/{model}.txt"
+	shell:
+		"bash {input.script} '{input.files}' '{output.res}' '{params.metal_in}'"
+	
+rule meta_report:
+	input:
+		filenames = expand(LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt", model = MODELS),
+		samplesizes = LOCAL_DIR+"/qc/data/samplesizes.RData",
+		report = LOCAL_DIR+"/meta-analysis/report/meta-analysis-report.Rmd"
+	output:
+		LOCAL_DIR+"/meta-analysis/report/meta-analysis-report.html"
+	shell:
+		"echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_file='{output}', output_format='all', params=list(filenames = '{input.filenames}', samplesizes='{input.samplesizes}'))\""
+
+rule cohort_cors:
+	input:
+		cohort_files = get_input_files,
+		conv_file = LOCAL_DIR+"/conv_file.csv",
+		meta_file = LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt",
+		samplesizes = LOCAL_DIR+"/qc/data/samplesizes.RData",
+		script = LOCAL_DIR+"/meta-analysis/scripts/cohort-cors.R"
+	output:
+		LOCAL_DIR+"/meta-analysis/results/cohort-cors/{model}.RData",
+	shell:
+		"echo $HOSTNAME; Rscript {input.script} '{input.cohort_files}' '{input.conv_file}' '{input.meta_file}' '{input.samplesizes}' '{output}'"
+
+rule effect_comp:
+	input:
+		cohort_files = get_input_files,
+		conv_file = LOCAL_DIR+"/conv_file.csv",
+		meta_file = LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt",
+		script = LOCAL_DIR+"/meta-analysis/scripts/effect-comparison.R"
+	output:
+		LOCAL_DIR+"/meta-analysis/results/effect-comp/{model}.png",
+	shell:
+		"echo $HOSTNAME; Rscript {input.script} '{input.cohort_files}' '{input.conv_file}' '{input.meta_file}' '{output}'"
+
+rule m_stats:
+	input:
+		cohort_files = get_input_files,
+		conv_file = LOCAL_DIR+"/conv_file.csv",
+		meta_file = LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt",
+		samplesizes = LOCAL_DIR+"/qc/data/samplesizes.RData",
+		script = LOCAL_DIR+"/meta-analysis/scripts/calc-mstatistics.R"
+	output:
+		LOCAL_DIR+"/meta-analysis/results/m-stats/{model}.RData",
+	shell:
+		"echo $HOSTNAME; Rscript {input.script} '{input.cohort_files}' '{input.conv_file}' '{input.meta_file}' '{input.samplesizes}' '{output}'"
+
+rule mreg:
+	input:
+		m_stats_file = LOCAL_DIR+"/meta-analysis/results/m-stats/{model}.RData",
+		samplesizes = LOCAL_DIR+"/qc/data/samplesizes.RData",
+		ad_def_file = LOCAL_DIR+"/meta-analysis/data/pace-ad-definitions.xlsx",
+		script = LOCAL_DIR+"/meta-analysis/scripts/meta-regression.R"
+	output:
+		LOCAL_DIR+"/meta-analysis/results/mreg/{model}.tsv",
+	shell:
+		"echo $HOSTNAME; Rscript {input.script} '{input.m_stats_file}' '{input.samplesizes}' '{input.ad_def_file}' '{output}'"
+
+rule cohort_rep:
+	input:
+		filenames = expand(LOCAL_DIR+"/meta-analysis/results/cohort-cors/{model}.RData", model = MODELS),
+		m_stats_filenames = expand(LOCAL_DIR+"/meta-analysis/results/m-stats/{model}.RData", model = MODELS),
+		effect_comp_filenames = expand(LOCAL_DIR+"/meta-analysis/results/effect-comp/{model}.png", model = MODELS),
+		mreg_filenames = expand(LOCAL_DIR+"/meta-analysis/results/mreg/{model}.tsv", model = MODELS),
+		samplesizes = LOCAL_DIR+"/qc/data/samplesizes.RData",
+		report = LOCAL_DIR+"/meta-analysis/report/cohort-comparison.Rmd"
+	output:
+		LOCAL_DIR+"/meta-analysis/report/cohort-comparison-report.html"
+	shell:
+		"echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_file='{output}', output_format='all', params=list(filenames = '{input.filenames}', m_stats_files = '{input.m_stats_filenames}', effect_comp_files='{input.effect_comp_filenames}', samplesizes='{input.samplesizes}', mreg_files='{input.mreg_filenames}'))\""
+
+rule get_godmc_data:
+	output:
+		LOCAL_DIR+"/meta-analysis/data/godmc_assoc_meta_all.csv.gz"
+	shell:
+		"echo $HOSTNAME; wget -t 10 -O '{output}' http://fileserve.mrcieu.ac.uk/mqtl/assoc_meta_all.csv.gz"
+
+# rule genetic_testing:
+# 	input:
+# 		script = LOCAL_DIR+"/meta-analysis/scripts/genetic-effects.R", 
+# 		godmc = LOCAL_DIR+"/meta-analysis/data/godmc_assoc_meta_all.csv.gz", 
+# 		ewas_res = LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt"
+# 	output:
+# 		qqs = LOCAL_DIR+"/meta-analysis/results/genetic-analyses/genetic-qqplots-{model}.png",
+# 		stats = LOCAL_DIR+"/meta-analysis/results/genetic-analyses/genetic-stats-{model}.RData"
+# 	shell:
+# 		"echo $HOSTNAME; Rscript {input.script} {input.godmc} {input.ewas_res} {output.qqs} {output.stats}"
+
+# rule genetic_testing_report:
+# 	input:
+# 		report = LOCAL_DIR+"/meta-analysis/report/genetic-analyses-report.Rmd",
+# 		stats_files = expand(LOCAL_DIR+"/meta-analysis/results/genetic-analyses/genetic-stats-{model}.RData", model = MODELS)
+# 	output:
+# 		LOCAL_DIR+"/meta-analysis/report/genetic-analyses-report.html"
+# 	shell:
+# 		"echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_file='{output}', output_format='all', params=list(filenames = '{input.stats_files}'))\""
+
+# rule site_lookup_report:
+# 	input:
+# 		filenames = expand(LOCAL_DIR+"/meta-analysis/results/meta-analysis/{model}.txt", model = MODELS), 
+# 		ec_studies = , 
+# 		ec_results = ,
+# 		report = LOCAL_DIR+"/meta-analysis/report/site-lookup.Rmd"
+# 	output:
+# 		LOCAL_DIR+"/meta-analysis/report/site-lookup.html"
+# 	shell:
+# 		"echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_file='{output}', output_format='all', params=list(filenames = '{input.filenames}', ec_studies = '{ec_studies}', ec_results = '{ec_results}'))\""

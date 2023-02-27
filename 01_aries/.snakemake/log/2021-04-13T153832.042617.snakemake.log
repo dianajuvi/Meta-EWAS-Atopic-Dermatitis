@@ -1,0 +1,4 @@
+Building DAG of jobs...
+SFTPFileException:
+The file cannot be parsed as an SFTP path in form 'host:port/path/to/file': /newhome/tb13101/PACE/pace_ad/data/ALSPAC_Cord_model1a.txt
+  File "/Users/tb13101/mambaforge/envs/snakemake-tutorial/lib/python3.8/site-packages/snakemake/remote/SFTP.py", line 97, in exists

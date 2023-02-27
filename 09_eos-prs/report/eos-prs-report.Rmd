@@ -1,0 +1,73 @@
+---
+title: Assessing the association between an eosinophil count PRS and AD case status
+author: Thomas Battram
+output:
+  bookdown::html_document2:
+    toc: true
+    theme: united
+params:
+  box: ""
+  reg_summ: ""
+  prs_plot: ""
+---
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE}
+
+## pkgs
+suppressWarnings(suppressPackageStartupMessages({
+library(bookdown) # extra markdown options
+library(knitr) # ...
+library(kableExtra) # extra nice tables
+library(tidyverse) # tidy code and data
+library(ewaff) # For easy EWAS plots
+library(cowplot) # plotting figures on a grid
+library(RColorBrewer) # for plotting colours
+library(usefunc) # own package of useful functions
+}))
+
+knitr::opts_chunk$set(echo = FALSE, 
+           			  warning = FALSE, 
+            		  message = TRUE, 
+            		  cache = FALSE, 
+            		  dpi = 300 
+            		  )
+```
+
+## Introduction
+
+Eosinophil counts are known to associate with eczema and thus could confound the relationship between DNAm and eczema in our EWAS of 3 eczema subtypes as part of the PACE consortium. Ideally we'd be able to estimate eosinophil counts using our DNAm data, but there are no cord blood references that include eosinophils. 
+
+There have been GWAS of blood cell counts (including eosinophils), thus we decided to assess whether the genetic component of eosinophil counts, i.e. a polygenic risk score (PRS) of eosinophil counts, associates with AD case status across our 3 subtypes. This gives an indication of whether eosinophil counts might confound the relationship between DNAm and AD.
+
+## Polygenic risk score generation
+
+The latest PRS of eosinophil counts was made by Xu Y. et al. PMID: [35072137](https://pubmed.ncbi.nlm.nih.gov/35072137/). We pulled the summary statistics from this PRS (SNPs and weights) from the [PGS catalog](https://www.pgscatalog.org/publication/PGP000051/). 
+
+The PRS was generated in ALSPAC individuals using PLINKv2.0. We standardised the PRS by creating Z-scores from the PRS values. The distribution of the standardised PRS is shown in __Figure \@ref(fig:prs-plot)__.
+
+```{r prs-plot, results = "asis", fig.cap = "PRS distribution", out.width='100%'}
+include_graphics(params$prs_plot)
+```
+
+## Association of PRS and AD
+
+Using logistic regression we assessed the association between the eosinophil count PRS (exposure) and AD (outcome). The results can be found in __Table \@ref(tab:glm-res)__. The difference in PRS distribution between cases and controls is shown in __Figure \@ref(fig:prs-box)__.
+
+```{r glm-res-setup, message=FALSE}
+res <- read_tsv(params$reg_summ)
+clean_ad_subs <- tibble(AD_subtype = c("earlyonset_AD", "childhood_AD", "persistent_AD"), 
+                        `AD subtype` = c("Early-onset", "Childhood", "Persistent"))
+clean_res <- res %>%
+    mutate(`Beta (95% CI)` = paste0(comma(estimate), " (", comma(CI_low), "; ", comma(CI_up), ")")) %>%
+    left_join(clean_ad_subs) %>%
+    dplyr::select(`AD subtype`, `Beta (95% CI)`, P = p)
+```
+
+```{r glm-res}
+kbl(clean_res, caption = "Association between AD and an eosinophil PRS") %>%
+    kable_styling()
+```
+
+```{r prs-box, results = "asis", fig.cap = "PRS distribution across cases and controls", out.width='100%'}
+include_graphics(params$box)
+```

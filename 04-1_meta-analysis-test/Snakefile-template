@@ -1,0 +1,56 @@
+#!/bin/python 
+
+from snakemake.remote.SFTP import RemoteProvider
+SFTP = RemoteProvider(username="", password="")
+
+LOCAL_DIR=""
+SCRATCH_DIR=""
+RDSF_FILEDIR=""
+
+MODELS = ["m1c-sr", "m1c-dd"]
+
+rule all:
+	input:
+		# expand(LOCAL_DIR+"/meta-analysis/results/metal-res/{model}.txt", model = flatten_list(list(all_models.values()))), 
+		expand(SCRATCH_DIR + "/04-1_meta-analysis-test/results/metal-res/{model}.txt", model = MODELS), 
+		SCRATCH_DIR + "/04-1_meta-analysis-test/report/meta-analysis-comparison-report.html"
+
+def get_input_files (wildcards):
+	file_dir = RDSF_FILEDIR+"/"+wildcards.model
+	wc = SFTP.glob_wildcards(file_dir+"/{file}")
+	return SFTP.remote(expand(file_dir+"/{file}", file = wc.file))
+
+rule meta_analysis:
+	input:
+		files = get_input_files,
+		script = LOCAL_DIR + "/04-1_meta-analysis-test/scripts/meta-analysis.sh"
+	output:
+		res = SCRATCH_DIR + "/04-1_meta-analysis-test/results/metal-res/{model}.txt"
+	params:
+		metal_in = SCRATCH_DIR + "/04-1_meta-analysis-test/data/metal-infiles/{model}.txt"
+	shell:
+		"bash {input.script} '{input.files}' '{output.res}' '{params.metal_in}'"
+
+rule summarise_results:
+	input:
+		files = expand(SCRATCH_DIR + "/04-1_meta-analysis-test/results/metal-res/{model}.txt", model = MODELS),
+		script = LOCAL_DIR + "/04-1_meta-analysis-test/scripts/summarise-meta-res.R"
+	output:
+		plots = SCRATCH_DIR + "/04-1_meta-analysis-test/results/meta-summary/man-qqs-m1c-ddsr.png", 
+		summary = SCRATCH_DIR + "/04-1_meta-analysis-test/results/meta-summary/comparison-summary.RData"
+	shell:
+		"echo $HOSTNAME; Rscript {input.script} '{input.files}' '{output.plots}' '{output.summary}'"
+	
+	
+rule meta_report:
+	input:
+		plots = SCRATCH_DIR + "/04-1_meta-analysis-test/results/meta-summary/man-qqs-m1c-ddsr.png",
+		summary = SCRATCH_DIR + "/04-1_meta-analysis-test/results/meta-summary/comparison-summary.RData",
+		definitions = SCRATCH_DIR + "/04-1_meta-analysis-test/data/pace-ad-definitions.xlsx",
+		samplesizes = LOCAL_DIR + "/03_qc/data/samplesizes.RData",
+		report = LOCAL_DIR + "/04-1_meta-analysis-test/report/meta-analysis-comparison-report.Rmd"
+	output:
+		SCRATCH_DIR + "/04-1_meta-analysis-test/report/meta-analysis-comparison-report.html"
+	shell:
+		"echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_file='{output}', output_format='all', params=list(plots = '{input.plots}', summary = '{input.summary}', definitions = '{input.definitions}', samplesizes='{input.samplesizes}'))\""""
+

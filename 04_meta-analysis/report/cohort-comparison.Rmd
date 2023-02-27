@@ -1,0 +1,414 @@
+---
+title: PACE eczema cohort comparisons
+author: Thomas Battram
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    theme: united
+    number_sections: false
+params:
+  filenames: ""
+  m_stats_files: ""
+  effect_comp_files: ""
+  samplesizes: ""
+  mreg_files: ""
+---
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE}
+
+## pkgs
+suppressWarnings(suppressPackageStartupMessages({
+library(bookdown) # extra markdown options
+library(knitr) # ...
+library(kableExtra) # extra nice tables
+library(tidyverse) # tidy code and data
+# library(ewaff) # For easy EWAS plots
+library(cowplot) # plotting figures on a grid
+library(RColorBrewer) # for plotting colours
+library(usefunc) # own package of useful functions
+}))
+
+knitr::opts_chunk$set(echo = FALSE, 
+           			  warning = FALSE, 
+            		  message = TRUE, 
+            		  cache = FALSE, 
+            		  dpi = 300 
+            		  )
+
+# Function for numbers in rmarkdown
+# comma <- function(x) format(x, digits = 2, big.mark = ",")
+```
+
+```{r general-setup}
+# params <- list(filenames = "results/cohort-cors/m1a.RData results/cohort-cors/m1b.RData", m_stats_files = "results/m-stats/m1a.RData results/m-stats/m1b.RData", samplesizes = "../qc/data/samplesizes.RData", mreg_files = "results/mreg/m1a.tsv")
+files <- unlist(str_split(params$filenames, " "))
+m_files <- unlist(str_split(params$m_stats_files, " "))
+e_comp_files <- unlist(str_split(params$effect_comp_files, " "))
+mreg_files <- unlist(str_split(params$mreg_files, " "))
+get_model <- function(res_file)
+{
+    stringr::str_extract(res_file, "m[1-3][a-c]")
+}
+```
+
+```{r res-setup, message=FALSE}
+mods <- sapply(files, get_model)
+all_res <- lapply(files, function(fi) {out <- new_load(fi); return(out)})
+names(all_res) <- mods
+m_mods <- sapply(m_files, get_model)
+all_mstats <- lapply(m_files, function(fi) {out <- new_load(fi); return(out)})
+names(all_mstats) <- m_mods
+
+names(mreg_files) <- get_model(mreg_files)
+mreg_res <- map_dfr(mreg_files, read_tsv, .id = "model")
+
+ss <- usefunc::new_load(params$samplesizes)
+
+names(e_comp_files) <- get_model(e_comp_files)
+
+get_heatmap_files <- function(mod)
+{
+    c(all_res[[mod]]$top$heatmap_f, all_res[[mod]]$all$heatmap_f)
+}
+
+make_table <- function(tab, cap = NULL)
+{ 
+    tab %>% 
+        usefunc::tidy_nums() %>%
+        usefunc::tidy_colnames() %>%
+        kbl(caption = cap) %>%
+        kable_styling() %>% 
+        scroll_box(width = "100%", height = "450px")
+}
+
+eczema_defs <- list(m1 = "childhood", m2 = "early-onset", m3 = "persistent")
+
+make_prev_cor_table <- function(mod)
+{
+    phen <- stringr::str_extract(mod, "m[1-3]")
+    model_letter <- stringr::str_extract(mod, "[a-c]")
+    ad_def <- eczema_defs[[phen]]
+    caption <- paste0(ad_def, " AD, model ", model_letter, " pairwise cohort comparsions")
+    make_table(all_res[[mod]]$top$prev_cor$res, cap = caption) %>%
+        footnote(general = "effect-cor = correlation between effect estimates of the top 30 CpGs, prev-diff = the estimated prevalence difference between cohorts. For more information see the Summary of project + methods section.", 
+                general_title = "", 
+                footnote_as_chunk = T)
+}
+
+extract_assoc_summary <- function(mod)
+{
+    phen <- stringr::str_extract(mod, "m[1-3]")
+    model_letter <- stringr::str_extract(mod, "[a-c]")
+    ad_def <- eczema_defs[[phen]]
+    t_res <- all_res[[mod]]$top$prev_cor$wilc_p
+    a_res <- all_res[[mod]]$all$prev_cor$wilc_p
+    nth <- all_res[[mod]]$top$n_tophits
+    mp <- all_res[[mod]]$top$maxp
+    out_tab <- tibble(eczema_definition = ad_def, model = model_letter, n_tophits = nth,
+                      maxp = mp, top_hit_wilc_p = t_res, all_wilc_p = a_res)
+    return(out_tab)
+}
+
+assoc_summary <- map_dfr(mods, extract_assoc_summary)
+
+```
+
+## Summary of project + methods
+
+This study is examining the association between DNA methylation and childhood eczema (up to ~10 years). Studies have data from different timepoints, so in the first instance we will classify individuals as ‘any eczema’ versus ‘no eczema’ according to all timepoints available up to age 10. Sub-analyses will be conducted that limits cases to those children who are diagnosed early in childhood (by ~2 years) or have persistent eczema (diagnosed by age 2 and have current eczema at age 8yrs).
+
+The analyses will therefore use 3 binary definitions:
+
+* [Childhood AD] - cases: AD by age 10, controls:no AD by age 10
+* [Early-onset AD] - cases: AD by age 2, controls: no AD by age 2
+* [Persistent AD] - cases: AD by age 2 and persisting to ~ 8-10yrs, controls: no AD by age 10
+
+The association of each outcome with DNA methylation will be explored using logistic regression and 3 models with different covariates:
+
+* model a: sex + batch (+ selection_factors) (+ ancestry)
+* model b: sex + batch + maternal_age + maternal_smoking + maternal_SES + gestational_age (+selection_factors) (+ ancestry)
+* model c: sex + batch + maternal_age + maternal_smoking + maternal_SES + gestational_age + cell_type (+ selection_factors) (+ ancestry)
+
+In this report, the correlation between cohort effect estimates is examined. Further the relationship between effect estimate correlation and difference between prevalence estimates is assessed.
+
+After the summary below and under each eczema type and model there are tables that show pairwise comparisons of each cohort. The correlation of effect estimates across the top 30 CpGs (the 30 CpGs with the lowest P values in the meta-analysis of EWAS) are shown (under the "effect_cor" column heading) alongside the difference in prevalence estimates between the cohorts (under the "prev_diff" column heading). 
+
+Using the top 30 CpG sites from the meta-analysis for each model, M-statistics were also calculated. These statistics give an indication of the study-wide heterogeneity across CpG sites, rather than typical heterogeneity statistics (such as I^2^) that assess heterogeneity across studies for single CpG sites.
+
+## Summary of models and association between effect estimate correlation and prevalence difference
+
+```{r summary}
+make_table(assoc_summary, cap = "A summary of the association between effect size correlations and prevalence differences between cohorts") %>%
+    footnote(general = "Correlations between effect sizes from different cohorts were calculated and then the association between these correlations and prevalence differences between the cohorts was estimated using a paired Wilcoxon signed rank test. This was analysis was performed using just the top 30 CpG sites from the meta-analysis (by P value) or using all CpG sites that overlapped between the individual cohort EWAS. n-tophits = number of CpGs selected from the meta-analysis, maxp = highest P value from the top CpGs, top-hit-wilc-p = P value from the Wilcoxon signed rank test when using the top CpGs only, all-wilc-p = P value from the Wilcoxon signed rank test when using all CpGs.", 
+             general_title = "", 
+             footnote_as_chunk = T)
+```
+
+## Childhood AD
+
+### Sample sizes + prevalence
+
+```{r samplesizes-m1}
+ss_m1 <- ss[["m1a"]]
+make_table(ss_m1)
+```
+
+### Meta-regression results
+
+```{r mreg-m1}
+mreg_res %>%
+    dplyr::filter(grepl("m1", model)) %>%
+    make_table(cap = "Assessing the impact of prevalence and samplesize on the influence a study has in the meta-analysis results")
+```
+
+### model a
+
+```{r prevalence-tab-m1a}
+make_prev_cor_table("m1a")
+```
+
+(ref:m1a-heatmaps) __Correlation between the effect estimates of childhood eczema EWAS, model a, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m1a, message=FALSE, results="asis", fig.cap='(ref:m1a-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m1a"))
+```
+
+(ref:m1a-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m1a, message=FALSE, results="asis", fig.cap='(ref:m1a-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m1a"]]$plot)
+```
+
+(ref:m1a-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m1a, message=FALSE, results="asis", fig.cap='(ref:m1a-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m1a"])
+```
+
+### model b
+
+```{r prevalence-tab-m1b}
+make_prev_cor_table("m1b")
+```
+
+(ref:m1b-heatmaps) __Correlation between the effect estimates of childhood eczema EWAS, model b, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m1b, message=FALSE, results="asis", fig.cap='(ref:m1b-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m1b"))
+```
+
+(ref:m1b-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m1b, message=FALSE, results="asis", fig.cap='(ref:m1b-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m1b"]]$plot)
+```
+
+(ref:m1b-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m1b, message=FALSE, results="asis", fig.cap='(ref:m1b-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m1b"])
+```
+
+### model c
+
+```{r prevalence-tab-m1c}
+make_prev_cor_table("m1c")
+```
+
+(ref:m1c-heatmaps) __Correlation between the effect estimates of childhood eczema EWAS, model c, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m1c, message=FALSE, results="asis", fig.cap='(ref:m1c-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m1c"))
+```
+
+(ref:m1c-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m1c, message=FALSE, results="asis", fig.cap='(ref:m1c-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m1c"]]$plot)
+```
+
+(ref:m1c-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m1c, message=FALSE, results="asis", fig.cap='(ref:m1c-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m1c"])
+```
+
+## Early-onset AD
+
+### Sample sizes + prevalence
+
+```{r samplesizes-m2}
+ss_m2 <- ss[["m2a"]]
+make_table(ss_m2)
+```
+
+### Meta-regression results
+
+```{r mreg-m2}
+mreg_res %>%
+    dplyr::filter(grepl("m2", model)) %>%
+    make_table(cap = "Assessing the impact of prevalence and samplesize on the influence a study has in the meta-analysis results")
+```
+
+### model a
+
+```{r prevalence-tab-m2a}
+make_prev_cor_table("m2a")
+```
+
+(ref:m2a-heatmaps) __Correlation between the effect estimates of early-onset eczema EWAS, model a, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m2a, message=FALSE, results="asis", fig.cap='(ref:m2a-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m2a"))
+```
+
+(ref:m2a-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m2a, message=FALSE, results="asis", fig.cap='(ref:m2a-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m2a"]]$plot)
+```
+
+(ref:m2a-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m2a, message=FALSE, results="asis", fig.cap='(ref:m2a-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m2a"])
+```
+
+### model b
+
+```{r prevalence-tab-m2b}
+make_prev_cor_table("m2b")
+```
+
+(ref:m2b-heatmaps) __Correlation between the effect estimates of early-onset eczema EWAS, model b, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m2b, message=FALSE, results="asis", fig.cap='(ref:m2b-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m2b"))
+```
+
+(ref:m2b-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m2b, message=FALSE, results="asis", fig.cap='(ref:m2b-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m2b"]]$plot)
+```
+
+(ref:m2b-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m2b, message=FALSE, results="asis", fig.cap='(ref:m2b-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m2b"])
+```
+
+### model c
+
+```{r prevalence-tab-m2c}
+make_prev_cor_table("m2c")
+```
+
+(ref:m2c-heatmaps) __Correlation between the effect estimates of early-onset eczema EWAS, model c, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m2c, message=FALSE, results="asis", fig.cap='(ref:m2c-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m2c"))
+```
+
+(ref:m2c-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m2c, message=FALSE, results="asis", fig.cap='(ref:m2c-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m2c"]]$plot)
+```
+
+(ref:m2c-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m2c, message=FALSE, results="asis", fig.cap='(ref:m2c-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m2c"])
+```
+
+## Persistent AD
+
+### Sample sizes + prevalence
+
+```{r samplesizes-m3}
+ss_m3 <- ss[["m3a"]]
+make_table(ss_m3)
+```
+
+### Meta-regression results
+
+```{r mreg-m3}
+mreg_res %>%
+    dplyr::filter(grepl("m3", model)) %>%
+    make_table(cap = "Assessing the impact of prevalence and samplesize on the influence a study has in the meta-analysis results")
+```
+
+### model a
+
+```{r prevalence-tab-m3a}
+make_prev_cor_table("m3a")
+```
+
+(ref:m3a-heatmaps) __Correlation between the effect estimates of persistent eczema EWAS, model a, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m3a, message=FALSE, results="asis", fig.cap='(ref:m3a-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m3a"))
+```
+
+(ref:m3a-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m3a, message=FALSE, results="asis", fig.cap='(ref:m3a-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m3a"]]$plot)
+```
+
+(ref:m3a-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m3a, message=FALSE, results="asis", fig.cap='(ref:m3a-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m3a"])
+```
+
+### model b
+
+```{r prevalence-tab-m3b}
+make_prev_cor_table("m3b")
+```
+
+(ref:m3b-heatmaps) __Correlation between the effect estimates of persistent eczema EWAS, model b, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m3b, message=FALSE, results="asis", fig.cap='(ref:m3b-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m3b"))
+```
+
+(ref:m3b-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m3b, message=FALSE, results="asis", fig.cap='(ref:m3b-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m3b"]]$plot)
+```
+
+(ref:m3b-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m3b, message=FALSE, results="asis", fig.cap='(ref:m3b-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m3b"])
+```
+
+### model c
+
+```{r prevalence-tab-m3c}
+make_prev_cor_table("m3c")
+```
+
+(ref:m3c-heatmaps) __Correlation between the effect estimates of persistent eczema EWAS, model c, across different cohorts.__ The left-hand-side is a heatmap showing correlations between effect estimates of the top 30 CpG sites (top meaning those with the lowest P value from the meta-analysis). The right-hand-side is a heatmap showing correlations between effect estimates of all overlapping CpG sites.
+
+```{r heatmaps-m3c, message=FALSE, results="asis", fig.cap='(ref:m3c-heatmaps)', fig.show="hold", fig.align="center", out.width = "49%"}
+include_graphics(get_heatmap_files("m3c"))
+```
+
+(ref:m3c-mstats) __M-statistics, prevalence and effect size__ These plots show calculated M-statistics, a measure of heterogeneity between studies using the top 30 CpG sites, for each study and their association with prevalence and effect size. A: the distribution of m-statistics, B: the association between M-statistics and prevalence, C: the association between M-statistics and effect size. 
+
+```{r mstats-m3c, message=FALSE, results="asis", fig.cap='(ref:m3c-mstats)', out.width="100%"}
+include_graphics(all_mstats[["m3c"]]$plot)
+```
+
+(ref:m3c-e-comp) __Comparison of effect sizes between cohorts__ The bars represent the 95% confidence intervals for the meta-analysis results.
+
+```{r e-comp-m3c, message=FALSE, results="asis", fig.cap='(ref:m3c-e-comp)', out.width="100%"}
+include_graphics(e_comp_files["m3c"])
+```
+

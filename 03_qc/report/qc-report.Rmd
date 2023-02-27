@@ -1,0 +1,244 @@
+---
+author: Thomas Battram
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    theme: united
+    number_sections: false
+params:
+  data: ""
+  set_title: ""
+  pheno: ""
+title: "`r gsub('_', ' ', params$set_title)`"
+---
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE}
+
+## pkgs
+suppressWarnings(suppressPackageStartupMessages({
+library(bookdown) # extra markdown options
+library(knitr) # ...
+library(kableExtra) # extra nice tables
+library(tidyverse) # tidy code and data
+library(ewaff) # For easy EWAS plots
+library(cowplot) # plotting figures on a grid
+library(RColorBrewer) # for plotting colours
+library(usefunc) # own package of useful functions
+}))
+
+knitr::opts_chunk$set(echo = FALSE, 
+           			  warning = FALSE, 
+            		  message = TRUE, 
+            		  cache = FALSE, 
+            		  dpi = 300 
+            		  )
+```
+
+```{r general-setup}
+get_model <- function(res_file)
+{
+  stringr::str_extract(res_file, "m[1-3][a-c]")
+}
+
+get_definition <- function(phenotype)
+{
+  phenos <- list(childhood = "cases: AD by age 10, controls:no AD by age 10", 
+                 early_onset = "cases: AD by age 2, controls: no AD by age 2", 
+                 persistent = "AD by age 2 and persisting to ~ 8-10yrs, controls: no AD by age 10")
+  return(phenos[[phenotype]])
+}
+
+# params <- list(data = '/newhome/tb13101/PACE/pace_ad/qc/report/input-files/m1a.RData /newhome/tb13101/PACE/pace_ad/qc/report/input-files/m1b.RData /newhome/tb13101/PACE/pace_ad/qc/report/input-files/m1c.RData', samplesizes = '/newhome/tb13101/PACE/pace_ad/qc/data/samplesizes.RData', set_title = 'Quality control report for PACE EWAS analysis of childhood atopic dermatitis', pheno = 'childhood')
+data_files <- unlist(str_split(params$data, " "))
+pheno <- params$pheno
+
+data <- lapply(data_files, function(x) {out <- new_load(x); return(out)})
+names(data) <- map_chr(data_files, get_model)
+a_data <- data[[grep("a", names(data))]]
+b_data <- data[[grep("b", names(data))]]
+c_data <- data[[grep("c", names(data))]]
+
+change_cell_colour <- function(df) 
+{
+    df[] <- lapply(df, function(x) {cell_spec(x, color = ifelse(trimws(x) == "TRUE", "red", "black"))}) 
+    return(df)
+}
+
+make_table <- function(dat)
+{
+    dat <- dat %>%
+      tidy_nums %>%
+      tidy_colnames
+    dat <- change_cell_colour(dat)
+    kbl(dat, escape = FALSE) %>% 
+        kable_styling() %>% 
+        # pack_rows(index = c("model a" = 10, "model b" = 10, "model c" = 10)) %>% 
+        scroll_box(width = "100%", height = "450px")
+}
+```
+
+## Summary of analysis
+
+This study is examining the association between DNA methylation and childhood eczema (up to 10 years). There are 3 definitions of eczema used throughout this study. This report is specific to EWAS of `r pheno` AD (`r get_definition(pheno)`).
+
+For the QC, the checks laid out by the developers of [QCEWAS](https://pubmed.ncbi.nlm.nih.gov/28119308/) were followed (although the package itself was not used). To examine inflation of results the [ewaff](https://github.com/perishky/ewaff) package was used to generate lambdas and QQ-plots and the [BACON](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-016-1131-9) package to estimate inflation and bias factors.
+
+## Model a
+
+Logistic regression model:
+
+\begin{equation}
+  AD = meth + sex\ (+ selection)\ (+ ancestry)\ (+ batch)
+  (\#eq:modela)
+\end{equation}
+
+where covariates in brackets are applied where appropriate.
+
+### Samplesizes
+
+```{r samplesizes-a}
+make_table(a_data$samplesizes)
+```
+
+### Expected value checks
+
+```{r stats-a}
+make_table(a_data$stats)
+```
+
+### Inflation statistics
+
+```{r inflation-a}
+make_table(a_data$inflation)
+```
+
+### QQ
+
+```{r qq-plots-a, results = "asis", out.width="100%"}
+include_graphics(a_data$plots$qq)
+```
+
+### Beta
+
+```{r beta-plots-a, results = "asis", out.width="100%"}
+include_graphics(a_data$plots$beta_box)
+```
+
+### SE
+
+```{r se-plots-a, results = "asis", out.width="100%"}
+include_graphics(a_data$plots$se_box)
+```
+
+### Precision plot
+
+```{r prec-plots-a, results = "asis", out.width="100%"}
+include_graphics(a_data$plots$prec)
+```
+
+## Model b
+
+Logistic regression model:
+
+\begin{equation}
+  AD = meth + sex + maternal age + maternal smoking + maternal SES + gestational age\ (+ selection)\ (+ ancestry)\ (+ batch)
+  (\#eq:modelb)
+\end{equation}
+
+where covariates in brackets are applied where appropriate.
+
+### Samplesizes
+
+```{r samplesizes-b}
+make_table(b_data$samplesizes)
+```
+
+### Expected value checks
+
+```{r stats-b}
+make_table(b_data$stats)
+```
+
+### Inflation statistics
+
+```{r inflation-b}
+make_table(b_data$inflation)
+```
+
+### QQ
+
+```{r qq-plots-b, results = "asis", out.width="100%"}
+include_graphics(b_data$plots$qq)
+```
+
+### Beta
+
+```{r beta-plots-b, results = "asis", out.width="100%"}
+include_graphics(b_data$plots$beta_box)
+```
+
+### SE
+
+```{r se-plots-b, results = "asis", out.width="100%"}
+include_graphics(b_data$plots$se_box)
+```
+
+### Precision plot
+
+```{r prec-plots-b, results = "asis", out.width="100%"}
+include_graphics(b_data$plots$prec)
+```
+
+## Model c
+
+Logistic regression model:
+
+\begin{equation}
+  AD = meth + sex + maternal age + maternal smoking + maternal SES + gestational age + cell composition\ (+ selection)\ (+ ancestry)\ (+ batch)
+  (\#eq:modelc)
+\end{equation}
+
+where covariates in brackets are applied where appropriate.
+
+### Samplesizes
+
+```{r samplesizes-c}
+make_table(c_data$samplesizes)
+```
+
+### Expected value checks
+
+```{r stats-c}
+make_table(c_data$stats)
+```
+
+### Inflation statistics
+
+```{r inflation-c}
+make_table(c_data$inflation)
+```
+
+### QQ
+
+```{r qq-plots-c, results = "asis", out.width="100%"}
+include_graphics(c_data$plots$qq)
+```
+
+### Beta
+
+```{r beta-plots-c, results = "asis", out.width="100%"}
+include_graphics(c_data$plots$beta_box)
+```
+
+### SE
+
+```{r se-plots-c, results = "asis", out.width="100%"}
+include_graphics(c_data$plots$se_box)
+```
+
+### Precision plot
+
+```{r prec-plots-c, results = "asis", out.width="100%"}
+include_graphics(c_data$plots$prec)
+```

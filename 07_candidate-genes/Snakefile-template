@@ -1,0 +1,47 @@
+#!/bin/python 
+
+import os
+
+LOCAL_DIR = os.getcwd()
+
+MODELS = ["m1c", "m2c", "m3c"]
+
+rule all:
+	input:
+		expand(LOCAL_DIR + "/results/{model}-comp-summary.RData", model = MODELS),
+		expand(LOCAL_DIR + "/results/plots/{model}-qq-comparison.png", model = MODELS),
+		LOCAL_DIR + "/report/candidate-gene-report.html"
+
+## Clean candidate gene data and extract CpGs within 1mb of these genes
+rule clean_cg_data:
+	input:
+		script = LOCAL_DIR + "/scripts/clean-genes.R",
+		raw = LOCAL_DIR + "/data/candidate-genes-raw.xlsx", 
+	output:
+		clean = LOCAL_DIR + "/data/candidate-genes-clean.tsv", 
+		cpg_genes = LOCAL_DIR + "/data/candidate-genes-cpgs.tsv"
+	shell:
+		"echo $HOSTNAME; Rscript {input.script} '{input.raw}' '{output.clean}' '{output.cpg_genes}'"
+
+## Compare CpGs within 1mb of candidate genes to the rest of the genome
+rule compare_res:
+	input:
+		genes = LOCAL_DIR + "/data/candidate-genes-cpgs.tsv",
+		meta_file = LOCAL_DIR + "/../04_meta-analysis/results/metal-res/{model}.txt",
+		script = LOCAL_DIR + "/scripts/candidate-gene-comp.R",
+	output:
+		res = LOCAL_DIR + "/results/{model}-comp-summary.RData", 
+		qqplot = LOCAL_DIR + "/results/plots/{model}-qq-comparison.png", 
+	shell:
+		"echo $HOSTNAME; Rscript {input.script} '{input.genes}' '{input.meta_file}' '{output.res}' '{output.qqplot}'"
+
+## Write it all out
+rule report:
+	input:
+		filenames = expand(LOCAL_DIR + "/results/{model}-comp-summary.RData", model = MODELS),
+		plotnames = expand(LOCAL_DIR + "/results/plots/{model}-qq-comparison.png", model = MODELS),
+		report = LOCAL_DIR + "/report/candidate-gene-report.Rmd"
+	output:
+		LOCAL_DIR + "/report/candidate-gene-report.html"
+	shell:
+		"echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_file='{output}', output_format='all', params=list(filenames = '{input.filenames}', plots='{input.plotnames}'))\""

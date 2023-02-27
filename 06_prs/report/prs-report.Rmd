@@ -1,0 +1,297 @@
+---
+title: Assessing the impact of using an eczema PRS as a covariate in an eczema EWAS
+author: Thomas Battram
+output:
+  html_document:
+    toc: true
+    theme: united
+params:
+  new_filenames: ""
+  old_filenames: ""
+  prs_plot: ""
+---
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE}
+
+## pkgs
+suppressWarnings(suppressPackageStartupMessages({
+library(bookdown) # extra markdown options
+library(knitr) # ...
+library(kableExtra) # extra nice tables
+library(tidyverse) # tidy code and data
+library(ewaff) # For easy EWAS plots
+library(cowplot) # plotting figures on a grid
+library(RColorBrewer) # for plotting colours
+library(usefunc) # own package of useful functions
+}))
+
+knitr::opts_chunk$set(echo = FALSE, 
+           			  warning = FALSE, 
+            		  message = TRUE, 
+            		  cache = FALSE, 
+            		  dpi = 300 
+            		  )
+
+# Function for numbers in rmarkdown
+# comma <- function(x) format(x, digits = 2, big.mark = ",")
+```
+
+```{r general-setup}
+newfiles <- unlist(str_split(params$new_filenames, " "))
+oldfiles <- unlist(str_split(params$old_filenames, " "))
+files <- c(oldfiles, newfiles)
+# test_path <- "/Users/tb13101/Desktop/projects/side-projects/pace_ad/aries/test-data"
+# files <- file.path(test_path, list.files(test_path))
+
+get_model <- function(res_file)
+{
+	stringr::str_extract(res_file, "m[1-3][a-d]")
+}
+
+tidy_nums <- function(df) 
+{
+    df[] <- lapply(df, comma)
+    return(df)
+}
+
+annotation <- meffil::meffil.get.features("450k")
+annotation <- annotation %>% 
+    mutate(chr = gsub("chr", "", chromosome)) %>%
+    mutate(chr = gsub("X", "23", chr)) %>% 
+    mutate(chr = as.numeric(gsub("Y", "24", chr)))
+```
+
+```{r qq-setup}
+get_lambda <- function(pvals) {
+	lambda <- median(qchisq(pvals, df = 1, lower.tail = F), na.rm = T) / qchisq(0.5, 1)
+	return(lambda)
+}
+
+make_qq <- function(res_file)
+{
+	res <- data.table::fread(res_file)
+	ewaff_qq <- ewaff.qq.plot(res$P) + 
+		theme_bw() + 
+		labs(title = get_model(res_file)) + 
+        theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+		# theme(text = element_text(size = 8))
+}
+
+plot_qqs <- function(pheno_mod, qqlist)
+{
+    m_qqs <- qqlist[grep(pheno_mod, names(qqlist))]
+    leg <- cowplot::get_legend(m_qqs[[1]] + 
+                                    guides(color = guide_legend(nrow = 1)) + 
+                                    theme(legend.position = "bottom")
+                                )
+    m_qqs <- lapply(m_qqs, function(x) {x + theme(legend.position = "none")})
+    # m_qqs[["leg"]] <- leg
+    plots <- cowplot::plot_grid(plotlist = m_qqs, nrow=1)
+    plots <- cowplot::plot_grid(plots, leg, ncol = 1, rel_heights = c(1, .1))
+    return(plots)
+}
+
+qqs <- lapply(files, make_qq)
+names(qqs) <- sapply(files, get_model)
+```
+
+```{r manhattan-setup}
+make_man <- function(res_file, cpg_annotations)
+{
+    res <- data.table::fread(res_file) %>%
+        left_join(cpg_annotations, by = c("probeID" = "name"))
+    # to highlight
+    cpg_h <- res[res$P < 1e-7, ]$probeID
+    gg_man <- gg.manhattan(df = res, 
+                           hlight = cpg_h, 
+                           title = NULL, 
+                           SNP = "probeID", 
+                           CHR = "chr", 
+                           BP = "position", 
+                           P = "P", 
+                           sig = 1e-7, 
+                           sugg = 1e-5, 
+                           lab = TRUE, 
+                           colour = TRUE)
+    gg_man <- gg_man + 
+        theme(axis.title.x = element_blank(), title = element_blank(), text = element_text(size = 10))
+    return(gg_man)
+}
+
+plot_mans <- function(pheno_mod, manlist) 
+{
+    m_man <- manlist[grep(pheno_mod, names(manlist))]
+    m_man <- lapply(m_man, function(x) {x + theme(axis.title.x = element_blank(), title = element_blank())})
+    plots <- cowplot::plot_grid(plotlist = m_man, labels = names(m_man), nrow = 2)
+    return(plots)
+}
+
+mans <- lapply(files, make_man, annotation)
+names(mans) <- sapply(files, get_model)
+```
+
+```{r tophits-setup}
+extract_tophits <- function(res_file, cpg_annotations, cutoff = NULL)
+{
+    res <- data.table::fread(res_file) %>%
+        left_join(cpg_annotations, by = c("probeID" = "name")) %>%
+        dplyr::select(gene = gene.symbol, probeID, BETA, SE, P, N_cases, N_controls) %>%
+        mutate(gene = gsub(";.*", "", gene)) %>%
+        as_tibble
+    out <- res %>%
+        dplyr::arrange(P) %>%
+        tidy_nums
+    if (!is.null(cutoff)) {
+        out <- dplyr::filter(out, P < cutoff)
+    } else {
+        out <- head(out, n=10)
+    }
+    return(out)
+}
+
+make_tophit_table <- function(pheno_mod, tophit_list)
+{
+    m_tophits <- tophit_list[grep(pheno_mod, names(tophit_list))]
+    m_tophits <- dplyr::bind_rows(m_tophits)
+    kbl(m_tophits) %>% 
+        kable_styling() %>% 
+        pack_rows(index = c("model c" = 10, "model d" = 10)) %>% 
+        scroll_box(width = "100%", height = "450px")
+}
+
+tophits <- lapply(files, extract_tophits, annotation)
+names(tophits) <- sapply(files, get_model)
+```
+
+## PRS information
+
+```{r prs-plot, results = "asis", cap = "PRS distribution"}
+include_graphics(params$prs_plot)
+```
+
+## Childhood AD
+
+### QQ 
+
+```{r qq-plots-m1, results = "asis", out.width = "100%", out.height = "50%"}
+plot_qqs("m1", qqs)
+```
+
+### manhattan
+
+```{r man-plots-m1, results = "asis"}
+plot_mans("m1", mans)
+```
+
+### top hits
+
+```{r tophits-m1}
+make_tophit_table("m1", tophits)
+```
+
+## Earlyonset AD
+
+### QQ 
+
+```{r qq-plots-m2, results = "asis"}
+plot_qqs("m2", qqs)
+```
+
+### manhattan
+
+```{r man-plots-m2, results = "asis"}
+plot_mans("m2", mans)
+```
+
+### top hits
+
+```{r tophits-m2}
+make_tophit_table("m2", tophits)
+```
+
+## Persistent AD
+
+### QQ 
+
+```{r qq-plots-m3, results = "asis"}
+plot_qqs("m3", qqs)
+```
+
+### manhattan
+
+```{r man-plots-m3, results = "asis"}
+plot_mans("m3", mans)
+```
+
+### top hits
+
+```{r tophits-m3}
+make_tophit_table("m3", tophits)
+```
+
+
+## Correlation between models
+
+```{r correlation, message=FALSE}
+## Get effect estimates
+beta_df <- map_dfc(files, function(x) {
+    res <- data.table::fread(x)
+    return(res$BETA)
+})
+colnames(beta_df) <- sapply(files, get_model)
+
+beta_df <- beta_df[, order(colnames(beta_df))]
+
+## correlation
+beta_cors <- cor(beta_df)
+
+## reshaping for heatmap
+get_upper_tri <- function(cormat)
+{
+    # Get upper triangle of the correlation matrix
+    cormat[lower.tri(cormat)] <- NA
+    return(cormat)
+}
+
+reorder_cormat <- function(cormat)
+{
+    # Use correlation between variables as distance
+    dd <- as.dist((1-cormat)/2)
+    hc <- hclust(dd)
+    cormat <-cormat[hc$order, hc$order]
+}
+
+cormat <- reorder_cormat(beta_cors)
+upper_tri <- get_upper_tri(cormat)
+
+melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
+
+heatmap_b <- ggplot(melted_cormat, aes(Var2, Var1, fill = value)) +
+    geom_tile(color = "white")+
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                         midpoint = 0, limit = c(-1,1), space = "Lab", 
+                         name="Pearson\nCorrelation") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+          size = 12, hjust = 1))+
+    coord_fixed()
+
+heatmap_b_text <- heatmap_b + 
+    geom_text(aes(Var2, Var1, label = comma(value)), color = "black", size = 4) +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.ticks = element_blank(),
+      legend.justification = c(1.5, -0.5),
+      legend.position = c(0.6, 0.7),
+      legend.direction = "horizontal")+
+      guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                    title.position = "top", title.hjust = 0.5))
+```
+
+```{r cor-heatmap, results="asis", cache=TRUE}
+heatmap_b_text
+```

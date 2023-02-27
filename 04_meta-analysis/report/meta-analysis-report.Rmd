@@ -1,0 +1,337 @@
+---
+title: EWAS of Atopic Dermatitis as part of PACE
+author: Thomas Battram
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    theme: united
+    number_sections: false
+    keep_md: true
+params:
+  filenames: ""
+  samplesizes: ""
+---
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE}
+
+## pkgs
+suppressWarnings(suppressPackageStartupMessages({
+library(bookdown) # extra markdown options
+library(knitr) # ...
+library(kableExtra) # extra nice tables
+library(tidyverse) # tidy code and data
+library(ewaff) # For easy EWAS plots
+library(cowplot) # plotting figures on a grid
+library(RColorBrewer) # for plotting colours
+library(usefunc) # own package of useful functions
+}))
+
+knitr::opts_chunk$set(echo = FALSE, 
+           			  warning = FALSE, 
+            		  message = TRUE, 
+            		  cache = FALSE, 
+            		  dpi = 300 
+            		  )
+
+# Function for numbers in rmarkdown
+# comma <- function(x) format(x, digits = 2, big.mark = ",")
+```
+
+```{r general-setup}
+# params <- list(filenames = "results/metal-res/m1a.txt results/metal-res/m1b.txt", samplesizes = "../qc/data/samplesizes.RData")
+files <- unlist(str_split(params$filenames, " "))
+ss <- new_load(params$samplesizes)
+get_model <- function(res_file)
+{
+    stringr::str_extract(res_file, "m[1-3][a-c]")
+}
+
+tidy_nums <- function(df) 
+{
+    df[] <- lapply(df, comma)
+    return(df)
+}
+
+annotation <- meffil::meffil.get.features("450k")
+annotation <- annotation %>% 
+    mutate(chr = gsub("chr", "", chromosome)) %>%
+    mutate(chr = gsub("X", "23", chr)) %>% 
+    mutate(chr = as.numeric(gsub("Y", "24", chr)))
+```
+
+```{r qq-setup}
+get_lambda <- function(pvals) {
+	lambda <- median(qchisq(pvals, df = 1, lower.tail = F), na.rm = T) / qchisq(0.5, 1)
+	return(lambda)
+}
+
+make_qq <- function(res_file)
+{
+	res <- data.table::fread(res_file)
+    lambda <- paste0("lambda = ", comma(get_lambda(res$Pvalue)))
+	ewaff_qq <- ewaff.qq.plot(res$Pvalue, lambda.method = "none") + 
+		theme_bw() + 
+        annotate("text", x = -Inf, y = Inf, label = lambda, hjust = 0, vjust = 1) + 
+		labs(title = get_model(res_file)) + 
+        theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+		# theme(text = element_text(size = 8))
+}
+
+plot_qqs <- function(pheno_mod, qqlist)
+{
+    m_qqs <- qqlist[grep(pheno_mod, names(qqlist))]
+    leg <- cowplot::get_legend(m_qqs[[1]] + 
+                                guides(color = guide_legend(nrow = 1)) + 
+                                theme(legend.position = "bottom")
+                                )
+    m_qqs <- lapply(m_qqs, function(x) {x + theme(legend.position = "none")})
+    # m_qqs[["leg"]] <- leg
+    plots <- cowplot::plot_grid(plotlist = m_qqs, nrow=1)
+    plots <- cowplot::plot_grid(plots, leg, ncol = 1, rel_heights = c(1, .1))
+    return(plots)
+}
+
+qqs <- lapply(files, make_qq)
+names(qqs) <- sapply(files, get_model)
+```
+
+```{r manhattan-setup}
+make_man <- function(res_file, cpg_annotations)
+{
+    res <- data.table::fread(res_file) %>%
+        left_join(cpg_annotations, by = c("MarkerName" = "name"))
+    # to highlight
+    cpg_h <- res[res$Pvalue < 1e-7, ]$MarkerName
+    gg_man <- gg.manhattan(df = res, 
+                           hlight = cpg_h, 
+                           title = NULL, 
+                           SNP = "MarkerName", 
+                           CHR = "chr", 
+                           BP = "position", 
+                           P = "Pvalue", 
+                           sig = 1e-7, 
+                           sugg = 1e-5, 
+                           lab = TRUE, 
+                           colour = TRUE)
+    gg_man <- gg_man + 
+        theme(axis.title.x = element_blank(), title = element_blank(), text = element_text(size = 10))
+    return(gg_man)
+}
+
+plot_mans <- function(pheno_mod, manlist) 
+{
+    m_man <- manlist[grep(pheno_mod, names(manlist))]
+    m_man <- lapply(m_man, function(x) {x + theme(axis.title.x = element_blank(), title = element_blank())})
+    plots <- cowplot::plot_grid(plotlist = m_man, labels = names(m_man), nrow = 3)
+    return(plots)
+}
+
+mans <- lapply(files, make_man, annotation)
+names(mans) <- sapply(files, get_model)
+```
+
+```{r tophits-setup}
+extract_tophits <- function(res_file, cpg_annotations, cutoff = NULL)
+{
+    # CpG CHR bp beta SE P Direction Isq het_p
+    res <- data.table::fread(res_file)
+    res <- res %>%
+        left_join(cpg_annotations, by = c("MarkerName" = "name")) %>%
+        mutate(Gene = gsub(";.*", "", gene.symbol), 
+               FDR_P = p.adjust(Pvalue, method = "fdr")) %>%
+        dplyr::select(CpG = MarkerName, Gene, Chr = chr, BP = position, Beta = Effect, SE = StdErr, P = Pvalue, FDR_P, Direction, Isq = HetISq, Het_p = HetPVal) %>%
+        as_tibble
+    out <- res %>%
+        dplyr::arrange(P) %>%
+        tidy_nums
+    if (!is.null(cutoff)) {
+        out <- dplyr::filter(out, P < cutoff)
+    } else {
+        out <- head(out, n=10)
+    }
+    return(out)
+}
+
+make_tophit_table <- function(pheno_mod, tophit_list)
+{
+    m_tophits <- tophit_list[grep(pheno_mod, names(tophit_list))]
+    m_tophits <- dplyr::bind_rows(m_tophits)
+    kbl(m_tophits) %>% 
+        kable_styling() %>% 
+        pack_rows(index = c("model a" = 10, "model b" = 10, "model c" = 10)) %>% 
+        scroll_box(width = "100%", height = "450px")
+}
+
+tophits <- lapply(files, extract_tophits, annotation)
+names(tophits) <- sapply(files, get_model)
+```
+
+## Summary of project + methods
+
+This study is examining the association between DNA methylation and childhood eczema (up to ~10 years). Studies have data from different timepoints, so in the first instance we will classify individuals as ‘any eczema’ versus ‘no eczema’ according to all timepoints available up to age 10. Sub-analyses will be conducted that limits cases to those children who are diagnosed early in childhood (by ~2 years) or have persistent eczema (diagnosed by age 2 and have current eczema at age 8yrs).
+
+The analyses will therefore use 3 binary definitions:
+
+* [Childhood AD] - cases: AD by age 10, controls:no AD by age 10
+* [Early-onset AD] - cases: AD by age 2, controls: no AD by age 2
+* [Persistent AD] - cases: AD by age 2 and persisting to ~ 8-10yrs, controls: no AD by age 10
+
+The association of each outcome with DNA methylation will be explored using logistic regression and 3 models with different covariates:
+
+* model a: sex + batch (+ selection_factors) (+ ancestry)
+* model b: sex + batch + maternal_age + maternal_smoking + maternal_SES + gestational_age (+selection_factors) (+ ancestry)
+* model c: sex + batch + maternal_age + maternal_smoking + maternal_SES + gestational_age + cell_type (+ selection_factors) (+ ancestry)
+
+See results of the meta-analyses using each AD definition and model below.
+
+## Childhood AD
+
+### Samplesizes
+
+```{r samplesizes-m1}
+ss_m1 <- ss[["m1a"]]
+kbl(ss_m1) %>% 
+    kable_styling()
+```
+
+### QQ 
+
+```{r qq-plots-m1, results = "asis"}
+plot_qqs("m1", qqs)
+```
+
+### manhattan
+
+```{r man-plots-m1, results = "asis"}
+plot_mans("m1", mans)
+```
+
+### top hits
+
+```{r tophits-m1}
+make_tophit_table("m1", tophits)
+```
+
+## Early-onset AD
+
+### Samplesizes
+
+```{r samplesizes-m2}
+ss_m2 <- ss[["m2a"]]
+kbl(ss_m2) %>% 
+    kable_styling()
+```
+
+### QQ 
+
+```{r qq-plots-m2, results = "asis"}
+plot_qqs("m2", qqs)
+```
+
+### manhattan
+
+```{r man-plots-m2, results = "asis"}
+plot_mans("m2", mans)
+```
+
+### top hits
+
+```{r tophits-m2}
+make_tophit_table("m2", tophits)
+```
+
+## Persistent AD
+
+### Samplesizes
+
+```{r samplesizes-m3}
+ss_m3 <- ss[["m3a"]]
+kbl(ss_m3) %>% 
+    kable_styling()
+```
+
+### QQ 
+
+```{r qq-plots-m3, results = "asis"}
+plot_qqs("m3", qqs)
+```
+
+### manhattan
+
+```{r man-plots-m3, results = "asis"}
+plot_mans("m3", mans)
+```
+
+### top hits
+
+```{r tophits-m3}
+make_tophit_table("m3", tophits)
+```
+
+
+## Correlation between models
+
+```{r correlation, message=FALSE}
+## Get effect estimates
+beta_df <- map_dfc(files, function(x) {
+    res <- data.table::fread(x)
+    return(res$Effect)
+})
+colnames(beta_df) <- sapply(files, get_model)
+
+beta_df <- beta_df[, order(colnames(beta_df))]
+
+## correlation
+beta_cors <- cor(beta_df)
+
+## reshaping for heatmap
+get_upper_tri <- function(cormat)
+{
+    # Get upper triangle of the correlation matrix
+    cormat[lower.tri(cormat)] <- NA
+    return(cormat)
+}
+
+reorder_cormat <- function(cormat)
+{
+    # Use correlation between variables as distance
+    dd <- as.dist((1-cormat)/2)
+    hc <- hclust(dd)
+    cormat <-cormat[hc$order, hc$order]
+}
+
+cormat <- reorder_cormat(beta_cors)
+upper_tri <- get_upper_tri(cormat)
+
+melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
+
+heatmap_b <- ggplot(melted_cormat, aes(Var2, Var1, fill = value)) +
+    geom_tile(color = "white")+
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                         midpoint = 0, limit = c(-1,1), space = "Lab", 
+                         name="Pearson\nCorrelation") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+          size = 12, hjust = 1))+
+    coord_fixed()
+
+heatmap_b_text <- heatmap_b + 
+    geom_text(aes(Var2, Var1, label = comma(value)), color = "black", size = 4) +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.ticks = element_blank(),
+      legend.justification = c(1.5, -0.5),
+      legend.position = c(0.6, 0.7),
+      legend.direction = "horizontal")+
+      guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                    title.position = "top", title.hjust = 0.5))
+```
+
+```{r cor-heatmap, results="asis"}
+heatmap_b_text
+```

@@ -1,0 +1,73 @@
+#!/bin/python 
+
+from snakemake.remote.SFTP import RemoteProvider
+SFTP = RemoteProvider(username="", password="")
+
+LOCAL_DIR=""
+RDSF_FILEDIR=""
+
+all_models = {
+    "childhood": ['m1a', 'm1b', 'm1c'],
+    "early_onset": ['m2a', 'm2b', 'm2c'],
+    "persistent": ['m3a', 'm3b', 'm3c'],
+}
+
+def flatten_list (list_of_lists):
+	return [item for sublist in list_of_lists for item in sublist]
+
+rule all:
+	input:
+		# expand(LOCAL_DIR+"/qc/report/input-files/{model}.RData", model = list(all_models.values())),
+		expand(LOCAL_DIR+"/qc/report/qc-report-{pheno}.html", pheno = list(all_models.keys()))
+
+# rule cp_files:
+# 	input:
+# 		SFTP.remote(RDSF_FILEDIR+"/{file}")
+# 	output:
+# 		temp("/newhome/tb13101/PACE/pace_ad/data/meta_analysis/{model}/{file}")
+# 	shell:
+# 		"cp {input} {output}"
+
+def get_input_files (wildcards):
+	file_dir=RDSF_FILEDIR+"/"+wildcards.model
+	wc=SFTP.glob_wildcards(file_dir+"/{file}")
+	return SFTP.remote(expand(file_dir+"/{file}", file = wc.file))
+
+rule qc_ewas:
+	input:
+		# input_files = expand("/newhome/tb13101/PACE/pace_ad/data/meta_analysis/{model}/{file}", file=wc.file, model=config["mod"]), 
+		input_files = get_input_files,
+		script = LOCAL_DIR+"/qc/scripts/data-qc.R",
+		conv_file = LOCAL_DIR+"/conv_file.csv"
+	output:
+		stats = LOCAL_DIR+"/qc/report/input-files/{model}.RData", 
+		beta_box = LOCAL_DIR+"/qc/report/input-files/{model}-beta-box.png", 
+		se_box = LOCAL_DIR+"/qc/report/input-files/{model}-se-box.png",
+		qq = LOCAL_DIR+"/qc/report/input-files/{model}-qq.png",
+		prec = LOCAL_DIR+"/qc/report/input-files/{model}-prec-plot.png"
+	shell:
+		"Rscript {input.script} '{input.input_files}' '{input.conv_file}' '{output.stats}' '{output.beta_box}' '{output.se_box}' '{output.qq}' '{output.prec}'"
+
+rule extract_n:
+	input:
+		files = expand(LOCAL_DIR+"/qc/report/input-files/{model}.RData", model = flatten_list(all_models.values())), 
+		script = LOCAL_DIR+"/qc/scripts/get-samplesizes.R"
+	output:
+		LOCAL_DIR+"/qc/data/samplesizes.RData"
+	shell:
+		"Rscript '{input.script}' '{input.files}' '{output}'"
+
+def get_report_data (wildcards):
+	return expand(LOCAL_DIR+"/qc/report/input-files/{model}.RData", model = all_models[wildcards.pheno])
+
+rule qc_report:
+	input:
+		data = get_report_data,
+		samplesizes = LOCAL_DIR+"/qc/data/samplesizes.RData",
+		report = LOCAL_DIR+"/qc/report/qc-report.Rmd"
+	params:
+		title = "Quality control report for PACE EWAS analysis of {pheno} atopic dermatitis", 
+	output:
+		LOCAL_DIR+"/qc/report/qc-report-{pheno}.html"
+	shell:
+		"echo $HOSTNAME; Rscript -e \"rmarkdown::render('{input.report}', output_file='{output}', output_format='all', params=list(data = '{input.data}', samplesizes = '{input.samplesizes}', set_title = '{params.title}', pheno = '{wildcards.pheno}'))\""

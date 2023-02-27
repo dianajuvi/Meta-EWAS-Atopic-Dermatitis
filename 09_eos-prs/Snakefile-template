@@ -1,0 +1,129 @@
+#!/bin/python
+
+import os, sys
+
+LOCAL_DIR = os.getcwd()
+
+## Check that the ARIES EWAS have already been run
+SCR_DIR = "" 
+EOS_DIR = SCR_DIR + ""
+ALSP_BFILE = ""
+ARIES_DIR = ""
+
+rule all:
+    input:
+        EOS_DIR + "/" + "results/eos_snps_grs.sscore",
+        EOS_DIR + "/" + "results/eos-prs-adcase-assoc.tsv", 
+        LOCAL_DIR + "/" + "report/eos-prs-report.html"
+
+## Extract PRS SNPs
+rule extract_snps:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/extract-snps.R", 
+        alsp_bim = ALSP_BFILE + ".bim", # needed to convert CHR:POS to RSIDs
+    output:
+        raw_snp_file = EOS_DIR + "/" + "data/eos-prs-snps.txt.gz",
+        snps = EOS_DIR + "/" + "data/snplist.txt",
+        snp_effects = EOS_DIR + "/" + "data/snp-effects.tsv",
+        ref_allele_file = EOS_DIR + "/" + "data/snp-ref-allele.tsv", 
+    params:
+        pgs_filepath = "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000090/ScoringFiles/PGS000090.txt.gz",
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.alsp_bim}' \
+                                        '{params.pgs_filepath}' \
+                                        '{output.raw_snp_file}' \
+                                        '{output.snps}' \
+                                        '{output.snp_effects}' \
+                                        '{output.ref_allele_file}' """           
+
+## Extract IDs used in the EWAS for the PRS
+rule extract_ids:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/extract-ids.R", 
+        data = SCR_DIR + "/01_aries/" + "data/pheno_eczema_stata_version15.dta", 
+    output: 
+        EOS_DIR + "/" + "data/ids-to-keep.tsv"
+    params:
+        aries_dir = ARIES_DIR
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.data}' \
+                                        '{params.aries_dir}' \
+                                        '{output}' """   
+
+## Generate PRS
+rule gen_prs:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/gen-alspac-eos-prs.sh", 
+        bfile = ALSP_BFILE + ".bim", 
+        snps = EOS_DIR + "/" + "data/snplist.txt",
+        snp_effects = EOS_DIR + "/" + "data/snp-effects.tsv",
+        ref_allele_file = EOS_DIR + "/" + "data/snp-ref-allele.tsv", 
+        ids = EOS_DIR + "/" + "data/ids-to-keep.tsv", 
+    output: 
+        EOS_DIR + "/" + "results/eos_snps_grs.sscore",
+    params:
+        plink_file = EOS_DIR + "/" + "data/plink-files/eos_snps" # intermediate file name
+    shell:
+        """echo $HOSTNAME; bash {input.script} \
+                                        '{input.bfile}' \
+                                        '{input.snps}' \
+                                        '{input.snp_effects}' \
+                                        '{input.ids}' \
+                                        '{params.plink_file}' \
+                                        '{input.ref_allele_file}' \
+                                        '{output}' """
+
+## Standardise PRS                                        
+rule standardise_prs:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/standardise-prs.R", 
+        data = EOS_DIR + "/" + "results/eos_snps_grs.sscore", 
+    output: 
+        score = EOS_DIR + "/" + "results/eos-prs-standardised.tsv", 
+        plot = EOS_DIR + "/" + "results/eos-prs-distribution.png",
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.data}' \
+                                        '{output.score}' \
+                                        '{output.plot}' """   
+
+## Assess differences in PRS between cases and controls
+rule prs_assoc:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/eos-prs-ad-assoc.R",
+        score = EOS_DIR + "/" + "results/eos-prs-standardised.tsv", 
+        data = SCR_DIR + "/01_aries/" + "data/pheno_eczema_stata_version15.dta", 
+        ids = EOS_DIR + "/" + "data/ids-to-keep.tsv", 
+    output:
+        boxplot = EOS_DIR + "/" + "results/eos-prs-adcase-boxplot.png", 
+        reg_summ = EOS_DIR + "/" + "results/eos-prs-adcase-assoc.tsv", 
+    params:
+        aries_dir = ARIES_DIR
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.score}' \
+                                        '{input.data}' \
+                                        '{input.ids}' \
+                                        '{params.aries_dir}' \
+                                        '{output.reg_summ}' \
+                                        '{output.boxplot}' """       
+
+## Generate report                                        
+rule prs_report:
+    input:
+        reg_summ = EOS_DIR + "/" + "results/eos-prs-adcase-assoc.tsv", 
+        boxplot = EOS_DIR + "/" + "results/eos-prs-adcase-boxplot.png", 
+        prs_plot = EOS_DIR + "/" + "results/eos-prs-distribution.png",
+        report = LOCAL_DIR + "/" + "report/eos-prs-report.Rmd"
+    output:
+        LOCAL_DIR + "/" + "report/eos-prs-report.html"
+    shell:
+        """echo $HOSTNAME; \
+                Rscript -e \"rmarkdown::render('{input.report}',
+                                               output_format='all', 
+                                               params = list(box = '{input.boxplot}', 
+                                                             reg_summ = '{input.reg_summ}', 
+                                                             prs_plot = '{input.prs_plot}'))\" """
+

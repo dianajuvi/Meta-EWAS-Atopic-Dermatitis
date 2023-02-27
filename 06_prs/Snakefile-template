@@ -1,0 +1,143 @@
+#!/bin/python
+
+import os, sys
+
+MODELS = ["m1d", "m2d", "m3d"]
+
+LOCAL_DIR = os.getcwd()
+
+## Check that the ARIES EWAS have already been run
+SCR_DIR = "/user/work/tb13101/pace_ad"
+ARIES_DIR = SCR_DIR + "/01_aries"
+if not os.path.isfile(ARIES_DIR + "/" + "results/ewas/ALSPAC_AD_m3c.txt"):
+    raise ValueError("EWAS in ARIES have not yet been conducted - go run it!!")
+
+rule all:
+    input:
+        expand(LOCAL_DIR + "/" + "data/svs/{model}.txt", model=MODELS),
+        expand(LOCAL_DIR + "/" + "results/ewas/ALSPAC_AD_{model}.txt", model=MODELS),
+        LOCAL_DIR + "/" + "report/prs-report.html"
+
+## Extract IDs used in the EWAS for the PRS
+rule extract_ids:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/extract-ids.R", 
+        data = ARIES_DIR + "/" + "data/pheno_eczema_stata_version15.dta", 
+        samplesheet = "", 
+    output: 
+        LOCAL_DIR + "/" + "data/ids-to-keep.tsv"
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.data}' \
+                                        '{input.samplesheet}' \
+                                        '{output}' """   
+
+## Generate PRS
+rule gen_prs:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/gen-alspac-prs.sh", 
+        bfile = "", 
+        snps = LOCAL_DIR + "/" + "data/clumped_1e-5_snps.txt", # This comes from Ashley's GWAS
+        snp_effects = LOCAL_DIR + "/" + "data/clumped_1e-5_snp-effects.tsv", # so does this!! 
+        ref_allele_file = LOCAL_DIR + "/" + "data/clumped_1e-5_snp-ref-allele.tsv",
+        ids = LOCAL_DIR + "/" + "data/ids-to-keep.tsv", 
+    output: 
+        LOCAL_DIR + "/" + "results/eczema_snps_grs.sscore",
+    params:
+        plink_file = LOCAL_DIR + "/" + "data/plink-files/eczema_snps" # intermediate file name
+    shell:
+        """echo $HOSTNAME; bash {input.script} \
+                                        '{input.bfile}' \
+                                        '{input.snps}' \
+                                        '{input.snp_effects}' \
+                                        '{input.ids}' \
+                                        '{params.plink_file}' \
+                                        '{input.ref_allele_file}' \
+                                        '{output}' """
+
+## Standardise PRS                                        
+rule standardise_prs:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/standardise-prs.R", 
+        data = ARIES_DIR + "/" + "results/eczema_snps_grs.sscore", 
+    output: 
+        score = LOCAL_DIR + "/" + "results/eczema-prs-standardised.tsv", 
+        plot = LOCAL_DIR + "/" + "results/eczema-prs-distribution.png",
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.data}' \
+                                        '{output.score}' \
+                                        '{output.plot}' """   
+
+# Note - this comes after extracting the phenotype data from ARIES
+# there would be a "clean_pheno" rule if Kim hadn't already extracted/cleaned that data
+rule gen_svs:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/gen-svs.R",
+        pheno_file = ARIES_DIR + "/" + "data/pheno_eczema_stata_version15.dta",
+        meth_file = ARIES_DIR + "/" + "data/cleaned_meth_data.RData", 
+        cell_counts = '',
+        prs = LOCAL_DIR + "/" + "results/eczema-prs-standardised.tsv", 
+        samplesheet = '',        
+        useful_functions = LOCAL_DIR + "/" + "scripts/useful_functions.R"
+    output:
+        results = LOCAL_DIR + "/" + "data/svs/{model}.txt", 
+        removed = LOCAL_DIR + "/" + "data/svs/removed/{model}.RData"
+    params:
+        models = MODELS
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.pheno_file}' \
+                                        '{input.meth_file}' \
+                                        '{input.cell_counts}' \
+                                        '{input.prs}' \
+                                        '{input.samplesheet}' \
+                                        '{input.useful_functions}' \
+                                        '{output.results}' \
+                                        '{output.removed}' \
+                                        '{params.models}'"""   
+
+# Could potentially add something here to make a report to see each of the covariates associations with the trait of interest
+
+rule run_ewas:
+    input:
+        script = LOCAL_DIR + "/" + "scripts/ewas.R",
+        pheno_file = ARIES_DIR + "/" + "data/pheno_eczema_stata_version15.dta",
+        meth_file = ARIES_DIR + "/" + "data/cleaned_meth_data.RData", 
+        cell_counts = '',
+        prs = LOCAL_DIR + "/" + "results/eczema-prs-standardised.tsv", 
+        samplesheet = '',
+        useful_functions = LOCAL_DIR + "/" + 'scripts/useful_functions.R',
+        svs_file = LOCAL_DIR + "/" + "data/svs/{model}.txt", 
+    output:
+        LOCAL_DIR + "/" + "results/ewas/ALSPAC_AD_{model}.txt"
+    params:
+        models = MODELS
+    shell:
+        """echo $HOSTNAME; Rscript {input.script} \
+                                        '{input.pheno_file}' \
+                                        '{input.meth_file}' \
+                                        '{input.cell_counts}' \
+                                        '{input.prs}' \
+                                        '{input.samplesheet}' \
+                                        '{input.useful_functions}' \
+                                        '{input.svs_file}' \
+                                        '{output}' \
+                                        '{params.models}'"""   
+
+rule prs_report:
+    input:
+        new_filenames = expand(LOCAL_DIR + "/" + "results/ewas/ALSPAC_AD_{model}.txt", model=MODELS),
+        old_filenames = expand(ARIES_DIR + "/" + "results/ewas/ALSPAC_AD_{model}.txt", model=["m1c", "m2c", "m3c"]),
+        prs_plot = LOCAL_DIR + "/" + "results/eczema-prs-distribution.png",
+        report = LOCAL_DIR + "/" + "report/prs-report.Rmd"
+    output:
+        LOCAL_DIR + "/" + "report/prs-report.html"
+    shell:
+        """echo $HOSTNAME; \
+                Rscript -e \"rmarkdown::render('{input.report}',
+                                               output_format='all', 
+                                               params = list(new_filenames = '{input.new_filenames}', 
+                                                             old_filenames = '{input.old_filenames}', 
+                                                             prs_plot = '{input.prs_plot}'))\" """
+

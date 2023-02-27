@@ -1,0 +1,142 @@
+---
+title: EWAS of Atopic Dermatitis as part of PACE
+author: Thomas Battram
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    theme: united
+    number_sections: false
+    keep_md: true
+params:
+  plots: ""
+  summary: ""
+  definitions: ""
+  samplesizes: ""
+---
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE}
+
+## pkgs
+suppressWarnings(suppressPackageStartupMessages({
+library(bookdown) # extra markdown options
+library(knitr) # ...
+library(kableExtra) # extra nice tables
+library(tidyverse) # tidy code and data
+library(ewaff) # For easy EWAS plots
+library(cowplot) # plotting figures on a grid
+library(RColorBrewer) # for plotting colours
+library(readxl) # reading in excel spreadsheets
+library(usefunc) # own package of useful functions
+}))
+
+knitr::opts_chunk$set(echo = FALSE, 
+           			  warning = FALSE, 
+            		  message = TRUE, 
+            		  cache = FALSE, 
+            		  dpi = 300 
+            		  )
+
+# Function for numbers in rmarkdown
+# comma <- function(x) format(x, digits = 2, big.mark = ",")
+```
+
+```{r general-setup, message=FALSE}
+# params <- list(plots = "results/meta-summary/man-qqs-m1c-ddsr.png", summary = "results/meta-summary/comparison-summary.RData", definitions = "data/pace-ad-definitions.xlsx", samplesizes = "~/projects/pace_ad/03_qc/data/samplesizes.RData")
+res_summ <- new_load(params$summary)
+ss <- new_load(params$samplesizes)
+definitions <- read_xlsx(params$definitions)
+get_model <- function(res_file)
+{
+    stringr::str_extract(res_file, "m[1-3][a-c]-..")
+}
+```
+
+```{r cohorts-setup}
+ss_m1 <- ss[["m1c"]]
+
+## Sort out cohort names
+definitions$cohort <- gsub("ARIES", "ALSPAC", definitions$cohort)
+ss_m1$cohort <- gsub("IOW", "IOW-F2", ss_m1$cohort)
+ss_m1$cohort <- gsub("GENR", "GenR", ss_m1$cohort)
+
+## combine data
+comb_dat <- left_join(ss_m1, definitions)
+
+## remove those not in the meta-analysis
+# comb_dat <- comb_dat %>%
+#     dplyr::filter(!is.na(include))
+
+get_tab_n <- function(n, cases, controls)
+{
+    paste0(n, " (", cases, ", ", controls, ")")
+}
+
+cohort_tabs <- lapply(c("Y", "N"), function(x) {
+    dat <- comb_dat %>%
+        dplyr::filter(include == x)
+    total_n <- tibble(cohort = "Total", N = sum(dat$N), N_cases = sum(dat$N_cases), N_controls = sum(dat$N_controls), prevalence = (N_cases / N) * 100)
+    out <- bind_rows(dat, total_n) %>%
+        mutate(`N (cases, controls)` = get_tab_n(N, N_cases, N_controls), 
+               prevalence = comma(prevalence)) %>%
+        dplyr::select(Cohort = cohort, `N (cases, controls)`, prevalence, definition = `Eczema definition`)
+})
+names(cohort_tabs) <- c("Strict", "Lenient")
+
+comb_cohort_tab <- bind_rows(cohort_tabs)
+
+# Doctor-diagnosed/"good" definition
+# | Cohort | Cases | Controls | N | Definition
+#  ...
+# Self-report/"poor" definition
+# | Cohort | Cases | Controls | N | Definition 
+
+```
+
+```{r summary-setup}
+
+summ_tab <- tibble(Metric = c("Correlation of all sites", "Correlation of top 30 strict sites", "Correlation of top 30 lenient sites", "Replication of top 30 strict sites", "Replication of top 30 lenient sites"), 
+                   Value = comma(c(res_summ$correlation$all, res_summ$correlation$top_dd, res_summ$correlation$top_sr, sum(res_summ$replication$top_dd$P < 0.05), sum(res_summ$replication$top_sr$P < 0.05))))
+
+# | Metric                  | Value |
+# | Correlation of all      |       |
+# | Correlation of top DD   |       |
+# | Correlation of top SR   |       |
+# | Replication of DD (0.05)|       |
+# | Replication of SR (0.05)|       |
+```
+
+## Summary of project + methods
+
+This study is examining the association between DNA methylation and childhood eczema (up to around 10 years). Studies used different definitions, and in this report we're checking whether the "stricter" defintions, most of which require a doctor diagnosis, give similar EWAS results to the more lenient definitions that only include rash symptoms. We split the EWAS into "strict" definitions and "lenient" defintions and meta-analysed each set of EWAS. Then we compared the results (see below). 
+
+We only used EWAS of childhood AD for the comparison. As a reminder, here is the general definition of childhood AD - cases: AD by age 10, controls:no AD by age 10
+
+The association of each outcome with DNA methylation was originally explored using logistic regression and 3 models with different covariates, for this analysis we are simply using the fully adjusted model, adjusting for the following covariates:
+
+* sex + batch + maternal_age + maternal_smoking + maternal_SES + gestational_age + cell_type (+ selection_factors) (+ ancestry)
+
+## Results
+
+### Cohorts 
+
+```{r cohorts}
+kbl(comb_cohort_tab, caption = "Cohort summary") %>% 
+    kable_styling() %>%
+    column_spec(1:ncol(comb_cohort_tab), border_left = T, border_right = T) %>%
+    pack_rows(index = c("Strict definition cohorts" = nrow(cohort_tabs[["Strict"]]), "Lenient definition cohorts" = nrow(cohort_tabs[["Lenient"]])))
+```
+
+### Plots
+
+```{r plots, results = "asis"}
+include_graphics(params$plots)
+```
+
+### Results summary
+
+```{r res-tab}
+kbl(summ_tab, caption = "Correlation and replication of results") %>%
+    kable_styling(full_width = FALSE) %>% 
+    footnote(general = "Correlation means Pearson's correlation of meta-analysis effect estimates. Top 30 sites = 30 CpG sites with the lowest P value. Replication is assessed at P<0.05.")
+```

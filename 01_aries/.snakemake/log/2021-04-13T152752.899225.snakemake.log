@@ -1,0 +1,4 @@
+Building DAG of jobs...
+MissingInputException in line 8 of /Users/tb13101/Desktop/projects/side-projects/pace_ad/aries/Snakefile:
+Missing input files for rule cp_files:
+bluecrystalp3.acrc.bris.ac.uk/projects/MRC-IEU/research/projects/ieu1/wp2/012/working/data/meta_analysis/m1/{wildcards.file}

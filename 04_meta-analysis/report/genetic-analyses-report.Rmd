@@ -1,0 +1,131 @@
+---
+title: Checking for potential genetic effects in EWAS of eczema for PACE
+author: Thomas Battram
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    theme: united
+    number_sections: false
+params:
+  filenames: ""
+---
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE}
+
+## pkgs
+suppressWarnings(suppressPackageStartupMessages({
+library(bookdown) # extra markdown options
+library(knitr) # ...
+library(kableExtra) # extra nice tables
+library(tidyverse) # tidy code and data
+library(usefunc) # own package of useful functions
+}))
+
+knitr::opts_chunk$set(echo = FALSE, 
+                  warning = FALSE, 
+                  message = TRUE, 
+                  cache = FALSE, 
+                  dpi = 300 
+                  )
+
+```
+
+```{r general-setup}
+# params <- list(filenames = "results/genetic-analyses/genetic-stats-m1a.RData")
+files <- unlist(str_split(params$filenames, " "))
+
+get_model <- function(res_file) stringr::str_extract(res_file, "m[1-3][a-c]")
+
+stats <- lapply(files, new_load)
+names(stats) <- sapply(files, get_model)
+
+make_table <- function(models, stats)
+{
+    out_tab <- map_dfr(models, function(x) {
+        mod_s <- stats[[x]]
+        out <- tibble(mqtl_ks_p = mod_s$mqtl_ks$p, 
+                      mqtl_med_diff = mod_s$mqtl_med_diff, 
+                      mqtl_in_top_10 = mod_s$top_10_mqtl, 
+                      gwas_ks_p = mod_s$gwas_ks$p, 
+                      gwas_med_diff = mod_s$gwas_med_diff, 
+                      gwas_in_top_10 = mod_s$top_10_gwas)
+        return(out)    
+    })
+    return(out_tab)
+}
+
+kable_de_table <- function(tab)
+{
+    tab %>%
+        tidy_nums %>%
+        tidy_colnames %>% 
+        kbl() %>%
+        kable_styling()
+}
+
+```
+
+## Childhood AD
+
+```{r table-m1}
+tab <- make_table(c("m1a", "m1b", "m1c"), stats)
+kable_de_table(tab)
+```
+
+### QQ plots
+
+```{r qq-plots-m1a, results = "asis", fig.cap = "model a"}
+include_graphics(stats$m1a$qq_file)
+```
+
+```{r qq-plots-m1b, results = "asis", fig.cap = "model b"}
+include_graphics(stats$m1b$qq_file)
+```
+
+```{r qq-plots-m1c, results = "asis", fig.cap = "model c"}
+include_graphics(stats$m1c$qq_file)
+```
+
+## Early-onset AD
+
+```{r table-m2}
+tab <- make_table(c("m2a", "m2b", "m2c"), stats)
+kable_de_table(tab)
+```
+
+### QQ plots
+
+```{r qq-plots-m2a, results = "asis", fig.cap = "model a"}
+include_graphics(stats$m2a$qq_file)
+```
+
+```{r qq-plots-m2b, results = "asis", fig.cap = "model b"}
+include_graphics(stats$m2b$qq_file)
+```
+
+```{r qq-plots-m2c, results = "asis", fig.cap = "model c"}
+include_graphics(stats$m2c$qq_file)
+```
+
+## Persistent AD
+
+```{r table-m3}
+tab <- make_table(c("m3a", "m3b", "m3c"), stats)
+kable_de_table(tab)
+```
+
+### QQ plots
+
+```{r qq-plots-m3a, results = "asis", fig.cap = "model a"}
+include_graphics(stats$m3a$qq_file)
+```
+
+```{r qq-plots-m3b, results = "asis", fig.cap = "model b"}
+include_graphics(stats$m3b$qq_file)
+```
+
+```{r qq-plots-m3c, results = "asis", fig.cap = "model c"}
+include_graphics(stats$m3c$qq_file)
+```
+
