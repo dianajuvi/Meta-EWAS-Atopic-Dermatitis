@@ -1,4 +1,0 @@
-Building DAG of jobs...
-WildcardError in line 8 of /Users/tb13101/Desktop/projects/side-projects/pace_ad/aries/Snakefile:
-Wildcards in input files cannot be determined from output files:
-'filename'
